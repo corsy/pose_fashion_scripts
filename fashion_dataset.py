@@ -22,6 +22,7 @@ output_files_dir = '/Users/corsy/Documents/1/outputs/'
 zoom_sclae = 1.7
 displacement_offset_factor = 0.13
 displacement_scale_factor = 0.14
+will_mirror_image = True
 
 # Joint order configuration in Fashion datasets
 joint_order = ['head',
@@ -32,11 +33,65 @@ joint_order = ['head',
 
 
 """
- Codes
+ Functions for generating training image lists.
 """
+
+# TODO[Luwei]: will implement this method later
 def converge_to_onedir():
     return
 
+
+"""
+    Draw the joints according to joints position
+    INPUTS: image that will be drawn, joint positions
+    OUTPUTS: marked image
+"""
+def draw_joints(img, joints):
+    size = img.shape
+    preview_img = img
+
+    for j, joint in enumerate(joints):
+        if j != 2 and j != 3 and j + 1 < len(joints):
+            sj = (int(joints[j, 0] * size[0]),
+                  int(joints[j, 1] * size[1]))
+            nj = (int(joints[j + 1, 0] * size[0]),
+                  int(joints[j + 1, 1] * size[1]))
+            cv.line(preview_img, sj, nj, (0, 255, 0), 3)
+
+    for j, joint in enumerate(joints):
+        joint = (int(joint[0] * size[0]), int(joint[1] * size[1]))
+        cv.circle(preview_img, joint, 5, (0, 0, 255), -1)
+
+    return preview_img
+
+"""
+    Extract the torso
+"""
+def get_torso_box(joint):
+    joint_pos = []
+    joint_pos.extend(np.asarray(joint['rhip']))  # lelb
+    joint_pos.extend(np.asarray(joint['lsho']))  # lsho
+    joint_pos = np.asarray(joint_pos).reshape((2, 2))
+    return joint_pos
+
+"""
+    Extract the torso for mirroring
+"""
+def mirror_torso_box(joint, size):
+    joint_pos = []
+    joint_pos.extend(np.asarray(joint['rhip']))  # lelb
+    joint_pos.extend(np.asarray(joint['lsho']))  # lsho
+    joint_pos = np.asarray(joint_pos).reshape((2, 2))
+
+    for i in range(0, 2):
+        joint_pos[i][0] = size[1] - joint_pos[i][0]
+
+    return joint_pos
+
+
+"""
+    Extract the target joints
+"""
 def get_joint_pos(joint):
     joint_pos = []
 
@@ -45,6 +100,25 @@ def get_joint_pos(joint):
     joint_pos.extend(np.asarray(joint['rsho']))  # rsho
 
     return np.asarray(joint_pos).reshape((3, 2))
+
+"""
+    Mirror the target joints
+"""
+def mirror_joints(joint, size):
+
+    joint_pos = []
+
+    joint_pos.extend(np.asarray(joint['lsho']))  # lsho
+    joint_pos.extend(np.asarray(joint['head']))  # head
+    joint_pos.extend(np.asarray(joint['rsho']))  # rsho
+
+    joint_pos = np.asarray(joint_pos).reshape((3, 2))
+
+    for i in range(0, 3):
+        joint_pos[i][0] = size[1] - joint_pos[i][0]
+
+    return joint_pos
+
 
 """
     Create the bounding box based on joint positions, zooming scales and displacments
@@ -81,6 +155,7 @@ def create_bbox(img_size, joint, scale, displacement, displacement_scale):
 
     return (st_x, st_y), (en_x - st_x, en_y - st_y)
 
+
 """
     Update the joint positions according to the bounding box
     INPUT: original point of bounding box, size of the box
@@ -91,18 +166,20 @@ def update_joints_pos(joint, ori, size):
     joint /= np.array([size[0], size[1]])
     return joint
 
+
 """
     Crop the images based on joints
-    INPUT: image, joint positions, translation displacement, scale displacement
+    INPUT: image, joint positions, torso box, translation displacement, scale displacement
     OUTPUT: cropped image, cropped positions, bounding box location and size
 """
-def crop_datas(img, joints, displacement, displacement_scale):
+def crop_datas(img, joints, torso,  displacement, displacement_scale):
     img_size = img.shape
     box_ori, box_size = create_bbox(img_size, joints, zoom_sclae, displacement, displacement_scale)
 
     # Generate Joint position
     # Note that position have been normalized
     joints_pos = update_joints_pos(joints, box_ori, box_size)
+    torso_pos = update_joints_pos(torso, box_ori, box_size)
 
     if np.all(joints_pos > 0):
 
@@ -116,17 +193,16 @@ def crop_datas(img, joints, displacement, displacement_scale):
         # Resize image to the 227x227 and save it
         img = cv.resize(img, (227, 227))
 
-        return img, joints_pos, box_ori, box_size
+        return img, joints_pos, box_ori, box_size, torso_pos
 
-    return None, None, None, None
+    return None, None, None, None, None
 
 
+"""
+    Main routine for generating training images
+"""
 def generate_datasets():
     bodies_config_files = glob.glob(annota_file_dir + '*.xml')
-
-    # 'joints_list' is the target joints list which need to be extract,
-    # currently, we need head, left and right shoulders.
-    joints_list = joint_order[:3]
 
     if not os.path.exists(output_files_dir + 'crop'):
         os.makedirs(output_files_dir + 'crop')
@@ -136,6 +212,8 @@ def generate_datasets():
         os.makedirs(output_files_dir + 'size')
     if not os.path.exists(output_files_dir + 'joint'):
         os.makedirs(output_files_dir + 'joint')
+    if not os.path.exists(output_files_dir + 'torso'):
+        os.makedirs(output_files_dir + 'torso')
     if not os.path.exists(output_files_dir + 'preview'):
         os.makedirs(output_files_dir + 'preview')
 
@@ -150,7 +228,7 @@ def generate_datasets():
         element = dom.documentElement
 
         # Get the image name
-        image_name = element.getElementsByTagName('ImageName')[0].firstChild.data
+        image_name = element.getElementsByTagName('ImageName')[0].firstChild.data.split('.')[0]
         ori_img = cv.imread(fashion_img_dir + image_name + '.jpg')
 
         # Fetch all <AnnotationNode></AnnotationNode>
@@ -184,14 +262,71 @@ def generate_datasets():
                         img = ori_img[:].copy()
 
                         size = img.shape
+                        torso_box = get_torso_box(joint_pos)
+                        joint_pos = get_joint_pos(joint_pos)
 
-                # Displacements values
-                displacement_x = displacement_offset_factor * np.random.randn()
-                displacement_y = displacement_offset_factor * np.random.randn()
-                displacement = (displacement_x, displacement_y)
-                displacement_scale = displacement_scale_factor * np.random.randn()
+                        # Displacements values
+                        displacement_x = displacement_offset_factor * np.random.randn()
+                        displacement_y = displacement_offset_factor * np.random.randn()
+                        displacement = (displacement_x, displacement_y)
+                        displacement_scale = displacement_scale_factor * np.random.randn()
+
+                        # Crop the image and
+                        img, joint_pos, box_ori, box_size, torso_box = crop_datas(img, joint_pos, torso_box,
+                                                                                  displacement, displacement_scale)
+
+                        if img is None:
+                            continue
+
+                        # Save the image, bounding box and positions
+                        cv.imwrite(output_files_dir + 'crop/%s-%s.jpg' % (image_name, str(disp)), img)
+                        np.save(output_files_dir + 'joint/%s-%s' % (image_name, str(disp)), joint_pos)
+                        train_list_file.write('%s-%s' % (image_name, str(disp))+'\n')
+                        augment_count += 1
+
+                        np.save(output_files_dir + 'ori/%s-%s' % (image_name, str(disp)), box_ori)
+                        np.save(output_files_dir + 'size/%s-%s' % (image_name, str(disp)), box_size)
+                        np.save(output_files_dir + 'torso/%s-%s' % (image_name, str(disp)), torso_box)
+
+                    # Mirroring
+                    if disp >= 10 and will_mirror_image is True:
+                        joint_pos = np.copy(joints)
+                        joint_pos = dict(zip(joint_order, joint_pos))
+                        img = ori_img[:].copy()
+                        img = cv.flip(img, 1)
+
+                        size = img.shape
+                        torso_box = mirror_torso_box(joint_pos, size)
+                        joint_pos = mirror_joints(joint_pos, size)
+
+                        # Displacements values
+                        displacement_x = displacement_offset_factor * np.random.randn()
+                        displacement_y = displacement_offset_factor * np.random.randn()
+                        displacement = (displacement_x, displacement_y)
+                        displacement_scale = displacement_scale_factor * np.random.randn()
+
+                        # Crop the image and
+                        img, joint_pos, box_ori, box_size, torso_box = crop_datas(img, joint_pos, torso_box, displacement, displacement_scale)
+
+                        if img is None:
+                            continue
+
+                        # Save the image, bounding box and positions
+                        cv.imwrite(output_files_dir + 'crop/m%s-%s.jpg' % (image_name, str(disp - 10)), img)
+                        np.save(output_files_dir + 'joint/m%s-%s' % (image_name, str(disp - 10)), joint_pos)
+                        train_list_file.write('m%s-%s' % (image_name, str(disp - 10))+'\n')
+                        augment_count += 1
+
+                        np.save(output_files_dir + 'ori/m%s-%s' % (image_name, str(disp - 10)), box_ori)
+                        np.save(output_files_dir + 'size/m%s-%s' % (image_name, str(disp - 10)), box_size)
+                        np.save(output_files_dir + 'torso/m%s-%s' % (image_name, str(disp)), torso_box)
 
                 count += 1
+
+                if count > 3:
+                    break
+
+        train_list_file.close()
 
 if __name__ == '__main__':
     generate_datasets()
