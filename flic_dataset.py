@@ -183,8 +183,15 @@ def create_bbox(img_size, joint, scale, displacement, displacement_scale):
 
     width = (max_x - min_x)
     height = (max_y - min_y)
+
+    if width/height < 0.8:
+        width = 0.8*height
+    elif height/width < 0.8:
+        height = 0.8*width
+
     ext_width = width * (scale + displacement_scale)
     ext_height = height * (scale + displacement_scale)
+
 
     # Add displacement
     min_x += int(displacement[0] * width)
