@@ -1,3 +1,11 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+ This script is aim to generating FLIC datasets
+ INPUTS: FLIC directory
+ OUTPUTS: FLIC training image list, preview image ....
+"""
+
 import cv2 as cv
 import os
 import glob

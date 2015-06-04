@@ -1,7 +1,9 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
  This script is aim to generating fashion datasets, which store the joint positions in xml files
- INPUTS:
- OUTPUTS:
+ INPUTS: Fashion datasets directory
+ OUTPUTS: Fashion training image lists, preview images.
 """
 
 import xml.dom.minidom
@@ -14,7 +16,10 @@ import shutil
 """
  Configuration Fields
 """
-# Directories, TODO[Luwei]: setup configuration here
+
+# TODO[Luwei]: setup configuration here
+
+# Directories
 fashion_img_dir = '/Users/corsy/Documents/1/'
 annota_file_dir = fashion_img_dir + 'annotation/'
 output_files_dir = '/Users/corsy/Documents/1/outputs/'
@@ -413,5 +418,8 @@ def generate_datasets():
     train_list_file.close()
 
 if __name__ == '__main__':
+    # If need to merge all distribute fashion datasets to one direcotry
     merge_to_onedir()
+
+    # Generate the fashion training list for later use
     generate_datasets()
